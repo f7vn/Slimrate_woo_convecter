@@ -1,0 +1,4 @@
+// Конфигурация для админ-панели Slimrate
+// Здесь можно менять токен для разных компаний
+
+const AUTH_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImY3dm50ZXN0Y29-MSIsImlhdCI6MTc0NjcxODc4MCwidHlwZSI6NSwiY29tcGFueSI6ImY3dm50ZXN0Y28iLCJyb2xlSWQiOiJmN3ZudGVzdGNvfjEifQ.oyzQt7d9Td8y4YosfltHqULSZsn-EJWCAzSFq63Uz5U'; 
