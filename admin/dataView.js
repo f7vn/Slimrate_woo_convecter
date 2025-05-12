@@ -1,3 +1,5 @@
+import { AUTH_TOKEN } from './config.js';
+
 // Функции для работы с данными Slimrate
 
 // Загрузка и отображение налогов

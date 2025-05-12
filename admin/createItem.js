@@ -1,3 +1,7 @@
+import { AUTH_TOKEN, WOOCOMMERCE_CONSUMER_KEY, WOOCOMMERCE_CONSUMER_SECRET, WOOCOMMERCE_SITE } from './config.js';
+
+const TEST_IMAGE_ID = 13262; // ID изображения из медиабиблиотеки WP для теста
+
 function renderCreateItemForm() {
     const block = document.getElementById('createItemBlock');
     block.innerHTML = `
@@ -100,13 +104,14 @@ function setupVariationsLogic() {
         div.className = 'variation-row';
         div.innerHTML = `
             <label>Variation Name: <input type="text" name="varName${count}"></label>
-            <label>Price: <input type="number" name="price${count}" step="0.01" required></label>
-            <label>Cost: <input type="number" name="cost${count}" step="0.01"></label>
-            <label>Strike-through Price: <input type="number" name="strikeThroughPrice${count}" step="0.01"></label>
+            <label>Price: <input type="number" name="price${count}" step="1" required></label>
+            <label>Cost: <input type="number" name="cost${count}" step="1"></label>
+            <label>Strike-through Price: <input type="number" name="strikeThroughPrice${count}" step="1"></label>
             <label>Image URL: <input type="text" name="image${count}"></label>
             <label>Barcode: <input type="text" name="barcode${count}"></label>
             <label>SKU: <input type="text" name="skuCode${count}"></label>
             <label>Quantity: <input type="number" name="startQuantity${count}" value="0"></label>
+            <label>Description: <textarea name="description${count}" rows="2"></textarea></label>
             <button type="button" class="removeVariationBtn">Remove</button>
         `;
         list.appendChild(div);
@@ -180,7 +185,7 @@ async function handleCreateItemSubmit(e) {
                 toDelete: false,
                 wooInfo: {
                     name: formData.get(`varName${i}`) || '',
-                    description: formData.get('description') || '',
+                    description: formData.get(`description${i}`) || '',
                     shortDescription: '',
                     pictures: varImageUrl ? [await uploadImageToSlimrate(varImageUrl)] : []
                 }
@@ -221,6 +226,11 @@ async function handleCreateItemSubmit(e) {
             form.reset();
             document.getElementById('variationsList').innerHTML = '';
             setupVariationsLogic();
+            // Создаём товар в WooCommerce
+            if (data && data.result) {
+                addLogEntry('Creating product in WooCommerce...', 'info');
+                await createWooProductFromSlimrate(data.result);
+            }
         } else {
             addLogEntry(`Error creating product: ${data.message || 'Unknown error'}`, 'error');
             resultDiv.innerHTML = `<span style="color:red;">Error creating product: ${data.message || 'Unknown error'}</span>`;
@@ -276,7 +286,176 @@ async function uploadImageToSlimrate(imageUrl) {
         addLogEntry(`Image upload error: ${error.message}`, 'error');
         return '';
     }
-} 
+}
+
+async function getOrCreateWooCategory(categoryName) {
+    const url = `${WOOCOMMERCE_SITE.replace(/\/$/, '')}/wp-json/wc/v3/products/categories?search=${encodeURIComponent(categoryName)}`;
+    const auth = btoa(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`);
+    try {
+        // 1. Поиск категории
+        const resp = await fetch(url, {
+            headers: { 'Authorization': `Basic ${auth}` }
+        });
+        const data = await resp.json();
+        if (Array.isArray(data) && data.length > 0) {
+            addLogEntry(`Woo category '${categoryName}' found, id: ${data[0].id}`, 'info');
+            return data[0].id;
+        }
+        // 2. Если не нашли — создаём
+        addLogEntry(`Woo category '${categoryName}' not found, creating...`, 'info');
+        const createUrl = `${WOOCOMMERCE_SITE.replace(/\/$/, '')}/wp-json/wc/v3/products/categories`;
+        const createResp = await fetch(createUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Basic ${auth}`
+            },
+            body: JSON.stringify({ name: categoryName })
+        });
+        const createData = await createResp.json();
+        if (createResp.ok && createData.id) {
+            addLogEntry(`Woo category '${categoryName}' created, id: ${createData.id}`, 'success');
+            return createData.id;
+        } else {
+            addLogEntry(`Error creating Woo category: ${createData.message || 'Unknown error'}`, 'error');
+            return null;
+        }
+    } catch (err) {
+        addLogEntry(`Error checking/creating Woo category: ${err.message}`, 'error');
+        return null;
+    }
+}
+
+async function createWooProductFromSlimrate(slimrateProduct) {
+    const mainItem = slimrateProduct.items && slimrateProduct.items[0];
+    const images = (mainItem && mainItem.image) ? [{ src: mainItem.image }] : [];
+    const varNames = (slimrateProduct.items || []).map(item => item.varName || '').filter(Boolean);
+    const uniqueVarNames = Array.from(new Set(varNames));
+    const attributes = uniqueVarNames.length > 0 ? [{
+        name: 'Variation Name',
+        visible: true,
+        variation: true,
+        options: uniqueVarNames
+    }] : [];
+    const isVariable = (slimrateProduct.items || []).length > 1;
+
+    // === Новый блок: получение/создание категории ===
+    let wooCategoryId = null;
+    if (slimrateProduct.category && slimrateProduct.category.displayName) {
+        wooCategoryId = await getOrCreateWooCategory(slimrateProduct.category.displayName);
+    }
+
+    const body = {
+        name: slimrateProduct.displayName,
+        type: isVariable ? 'variable' : 'simple',
+        description: slimrateProduct.description || '',
+        images,
+        meta_data: [
+            { key: 'slimrate_id', value: slimrateProduct.id },
+            { key: 'barcode', value: mainItem && mainItem.barcode || '' }
+        ],
+        ...(wooCategoryId ? { categories: [{ id: wooCategoryId }] } : {}),
+        ...(isVariable ? { attributes } : {
+            regular_price: mainItem && mainItem.price ? String(mainItem.price) : '',
+            sale_price: mainItem && mainItem.strikeThroughPrice ? String(mainItem.strikeThroughPrice) : '',
+            sku: mainItem && mainItem.skuCode || ''
+        })
+    };
+
+    const url = `${WOOCOMMERCE_SITE.replace(/\/$/, '')}/wp-json/wc/v3/products`;
+    const auth = btoa(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`);
+
+    try {
+        // 1. Создаём основной товар
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Basic ${auth}`
+            },
+            body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            addLogEntry(`WooCommerce error: ${data.message || 'Unknown error'}`, 'error');
+            return;
+        }
+        addLogEntry('Product created in WooCommerce!', 'success');
+
+        // 2. Если variable product — создаём вариации отдельно
+        if (isVariable && data && data.id) {
+            const productId = data.id;
+            for (const item of slimrateProduct.items) {
+                const variationBody = {
+                    regular_price: item.price ? String(item.price) : '',
+                    sale_price: item.strikeThroughPrice ? String(item.strikeThroughPrice) : '',
+                    sku: item.skuCode || '',
+                    description: (item.wooInfo && item.wooInfo.description) || '',
+                    meta_data: [
+                        { key: 'slimrate_id', value: item.id },
+                        { key: 'barcode', value: item.barcode || '' }
+                    ],
+                    attributes: [{ name: 'Variation Name', option: item.varName || '' }],
+                    image: { id: TEST_IMAGE_ID }
+                };
+                addLogEntry(`Using test WP Media ID for variation image: ${TEST_IMAGE_ID}`, 'info');
+                const varUrl = `${WOOCOMMERCE_SITE.replace(/\/$/, '')}/wp-json/wc/v3/products/${productId}/variations`;
+                addLogEntry(`Creating variation '${item.varName || ''}' in WooCommerce...`, 'info');
+                const varResp = await fetch(varUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Basic ${auth}`
+                    },
+                    body: JSON.stringify(variationBody)
+                });
+                const varData = await varResp.json();
+                if (varResp.ok) {
+                    addLogEntry(`Variation '${item.varName || ''}' created in WooCommerce!`, 'success');
+                } else {
+                    addLogEntry(`Error creating variation '${item.varName || ''}': ${varData.message || 'Unknown error'}`, 'error');
+                }
+            }
+        }
+    } catch (err) {
+        addLogEntry(`WooCommerce request error: ${err.message}`, 'error');
+    }
+}
+
+async function uploadImageToWoo(imageUrl) {
+    try {
+        const response = await fetch(imageUrl);
+        if (!response.ok) {
+            addLogEntry(`Error fetching image for WP Media: ${response.status} ${response.statusText}`, 'error');
+            return null;
+        }
+        const blob = await response.blob();
+        const fileName = imageUrl.split('/').pop() || 'variation.jpg';
+        const formData = new FormData();
+        formData.append('file', blob, fileName);
+        const url = WOOCOMMERCE_SITE.replace(/\/$/, '') + '/wp-json/wp/v2/media';
+        const auth = btoa(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`);
+        addLogEntry('Uploading image to WP Media Library...', 'info');
+        const uploadResp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Basic ${auth}`
+            },
+            body: formData
+        });
+        const data = await uploadResp.json();
+        if (uploadResp.ok && data.id) {
+            addLogEntry(`Image uploaded to WP Media, id: ${data.id}`, 'success');
+            return data.id;
+        } else {
+            addLogEntry(`Error uploading image to WP Media: ${data.message || 'Unknown error'}`, 'error');
+            return null;
+        }
+    } catch (err) {
+        addLogEntry(`Error uploading image to WP Media: ${err.message}`, 'error');
+        return null;
+    }
+}
 
 export {
     renderCreateItemForm
