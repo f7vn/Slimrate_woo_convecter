@@ -1,0 +1,62 @@
+<div class="product-form-section">
+    <h3>Простой товар</h3>
+    <div class="form-grid">
+        <div class="form-group">
+            <label>Цена продажи:</label>
+            <input type="number" name="simplePrice" step="1" placeholder="0">
+        </div>
+        <div class="form-group">
+            <label>Себестоимость:</label>
+            <input type="number" name="simpleCost" step="1" placeholder="0">
+        </div>
+        <div class="form-group">
+            <label>Зачеркнутая цена:</label>
+            <input type="number" name="simpleStrikeThroughPrice" step="1" placeholder="0">
+        </div>
+        <div class="form-group">
+            <label>SKU:</label>
+            <input type="text" name="simpleSkuCode" placeholder="Артикул товара">
+        </div>
+        <div class="form-group">
+            <label>Штрихкод:</label>
+            <input type="text" name="simpleBarcode" placeholder="Штрихкод">
+        </div>
+    </div>
+    
+    <!-- Управление складом -->
+    <div class="stock-management-section">
+        <h4>Управление складом</h4>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" name="simpleManageStock" id="simpleManageStock">
+                <span class="checkmark"></span>
+                Отслеживать количество товара на складе
+            </label>
+        </div>
+        <div class="form-group" id="simpleStockQuantityGroup" style="display: none;">
+            <label>Количество на складе: <span class="required">*</span></label>
+            <input type="number" name="simpleStartQuantity" min="0" step="1" placeholder="0" value="0">
+            <small class="field-help">Укажите целое количество товара на складе</small>
+        </div>
+    </div>
+    
+    <div class="form-group full-width">
+        <label>Краткое описание для WooCommerce:</label>
+        <textarea name="simpleWooShortDescription" rows="2" placeholder="Краткое описание товара для WooCommerce"></textarea>
+    </div>
+    <div class="form-group full-width">
+        <label>Описание для WooCommerce (необязательно):</label>
+        <textarea name="simpleWooDescription" rows="3" placeholder="Переопределяет основное описание для WooCommerce"></textarea>
+    </div>
+    <div class="form-group full-width">
+        <label>Галерея изображений для WooCommerce:</label>
+        <div id="simpleGalleryContainer">
+            <div class="gallery-item">
+                <input type="url" name="simpleGalleryImage1" placeholder="https://example.com/gallery-image-1.jpg">
+                <button type="button" class="btn-remove-gallery" onclick="removeGalleryItem(this)" style="display: none;">×</button>
+            </div>
+        </div>
+        <button type="button" id="addSimpleGalleryBtn" class="btn-add-gallery">+ Добавить изображение в галерею</button>
+        <small class="gallery-help">Дополнительные изображения для галереи товара в WooCommerce</small>
+    </div>
+</div> 

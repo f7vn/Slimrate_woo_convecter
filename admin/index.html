@@ -9,26 +9,113 @@
     <div class="admin-container">
         <h1>Админ-панель Slimrate</h1>
         
-        <div class="buttons-row">
-            <button id="loadTaxesBtn">Загрузить налоги</button>
-            <button id="loadUnitsBtn">Загрузить единицы измерения</button>
-            <button id="loadCategoriesBtn">Загрузить категории</button>
-        </div>
-
-        <div class="info-blocks">
-            <div id="companyInfo"></div>
-            <div id="categoriesBlock"></div>
-        </div>
-
-        <div class="create-item-section">
-            <div id="createItemBlock"></div>
-            <div id="itemLogBlock">
-                <h2>Log</h2>
-                <div id="itemLog" class="log-content"></div>
+        <!-- Система вкладок -->
+        <div class="tabs-container">
+            <div class="tabs-header">
+                <button class="tab-button active" data-tab="create-items">Создание товаров</button>
+                <button class="tab-button" data-tab="system-tools">Системные инструменты</button>
+            </div>
+            
+            <!-- Вкладка создания товаров -->
+            <div class="tab-content active" id="create-items">
+                <div class="create-item-section">
+                    <div id="createItemBlock"></div>
+                    <div id="itemLogBlock">
+                        <div class="log-header">
+                            <h2>Лог создания товара</h2>
+                            <button type="button" id="clearLogBtn" class="btn-clear">Очистить</button>
+                        </div>
+                        <div id="itemLog" class="log-content"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Вкладка системных инструментов -->
+            <div class="tab-content" id="system-tools">
+                <div class="system-tools-section">
+                    <div class="tools-panel">
+                        <h2>Загрузка данных из Slimrate</h2>
+                        <div class="buttons-row">
+                            <button id="loadTaxesBtn">Загрузить налоги</button>
+                            <button id="loadUnitsBtn">Загрузить единицы измерения</button>
+                            <button id="loadCategoriesBtn">Загрузить категории</button>
+                        </div>
+                        
+                        <h2>Обновление товаров</h2>
+                        <div class="buttons-row">
+                            <button id="updateItemsBtn">Обновить товары из Slimrate</button>
+                            <button id="resetLastSyncBtn" class="btn-reset">🔄 Сброс времени последней синхронизации</button>
+                        </div>
+                        
+                        <h2>Автоматическая синхронизация</h2>
+                        <div class="autosync-panel">
+                            <div class="autosync-status-row">
+                                <div id="autosync-status" class="status-display">
+                                    <strong>Статус:</strong> 🔴 Отключена<br>
+                                    <strong>Последняя синхронизация:</strong> Никогда
+                                </div>
+                            </div>
+                            <div class="autosync-controls">
+                                <div class="interval-setting">
+                                    <label for="autosync-interval">Интервал (минуты):</label>
+                                    <input type="number" id="autosync-interval" min="5" max="1440" value="30" class="interval-input">
+                                    <button id="set-interval" class="btn-set">Установить</button>
+                                </div>
+                                <div class="autosync-buttons">
+                                    <button id="enable-autosync" class="btn-enable">🟢 Включить автосинхронизацию</button>
+                                    <button id="disable-autosync" class="btn-disable" style="display: none;">🔴 Отключить автосинхронизацию</button>
+                                    <button id="test-sync" class="btn-test">🔄 Тестовая синхронизация</button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h2>Системные утилиты</h2>
+                        <div class="time-display-block">
+                            <div class="time-info">
+                                <div class="time-row">
+                                    <span class="time-label">Текущее время GMT:</span>
+                                    <span id="currentGMTTime" class="time-value">--:--:--</span>
+                                </div>
+                                <div class="time-row">
+                                    <span class="time-label">ISO формат для API:</span>
+                                    <span id="currentISOTime" class="time-value">----</span>
+                                    <button id="copyISOBtn" class="btn-copy">Копировать</button>
+                                </div>
+                                <div class="time-row">
+                                    <span class="time-label">Локальное время:</span>
+                                    <span id="currentLocalTime" class="time-value">--:--:--</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="data-display-block">
+                            <div id="dataDisplay">
+                                <h2>Данные Slimrate</h2>
+                                <p>Выберите тип данных для загрузки</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="system-log-block">
+                        <div class="log-header">
+                            <h2>Системный лог</h2>
+                            <button type="button" id="clearSystemLogBtn" class="btn-clear">Очистить</button>
+                        </div>
+                        <div id="systemLog" class="log-content"></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
-    <!-- <script src="config.js"></script> -->
+    
+    <script type="module" src="js/core/utils.js"></script>
+    <script type="module" src="js/products/simpleProduct.js"></script>
+    <script type="module" src="js/products/variableProduct.js"></script>
+    <script type="module" src="js/products/createItem.js"></script>
+    <script type="module" src="js/components/gallery.js"></script>
+    <script type="module" src="js/components/tabs.js"></script>
+    <script type="module" src="js/sync/updateItems.js"></script>
+    <script type="module" src="js/core/scheduler.js"></script>
     <script type="module" src="app.js"></script>
 </body>
 </html> 
