@@ -25,6 +25,15 @@ jQuery(document).ready(function($) {
         // Кнопка диагностики API
         $('#api-diagnostics-btn').on('click', handleApiDiagnostics);
         
+        // Кнопка поиска товаров для привязки
+        $('#search-linkable-btn').on('click', handleSearchLinkable);
+        
+        // Кнопка обновления статистики
+        $('#refresh-stats-btn').on('click', handleRefreshStats);
+        
+        // Кнопки отвязки товаров
+        $(document).on('click', '.unlink-product', handleUnlinkProduct);
+        
         // Обработка отправки форм настроек
         $('.slimrate-settings form').on('submit', handleSettingsSubmit);
     }
@@ -190,6 +199,120 @@ jQuery(document).ready(function($) {
             },
             error: function(xhr, status, error) {
                 showNotice('Ошибка диагностики: ' + error, 'error');
+            },
+            complete: function() {
+                setButtonLoading($btn, false);
+            }
+        });
+    }
+    
+    // Поиск товаров для привязки
+    function handleSearchLinkable() {
+        const $btn = $('#search-linkable-btn');
+        
+        setButtonLoading($btn, true);
+        showSyncLog('Поиск товаров для привязки...', 'info');
+        
+        $.ajax({
+            url: slimrateAjax.ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'slimrate_search_linkable_products',
+                nonce: slimrateAjax.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    showLinkableProductsModal(response.data);
+                    showSyncLog('Найдено товаров для привязки: ' + response.data.linkable_count, 'success');
+                } else {
+                    showNotice('Ошибка поиска: ' + response.data.message, 'error');
+                    showSyncLog('Ошибка поиска: ' + response.data.message, 'error');
+                }
+            },
+            error: function(xhr, status, error) {
+                const errorMsg = 'Ошибка поиска: ' + error;
+                showNotice(errorMsg, 'error');
+                showSyncLog(errorMsg, 'error');
+            },
+            complete: function() {
+                setButtonLoading($btn, false);
+            }
+        });
+    }
+    
+    // Обновление статистики
+    function handleRefreshStats() {
+        const $btn = $('#refresh-stats-btn');
+        
+        setButtonLoading($btn, true);
+        
+        $.ajax({
+            url: slimrateAjax.ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'slimrate_refresh_stats',
+                nonce: slimrateAjax.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    showNotice('Статистика обновлена!', 'success');
+                    
+                    // Обновляем страницу для свежих данных
+                    setTimeout(function() {
+                        location.reload();
+                    }, 1000);
+                } else {
+                    showNotice('Ошибка обновления статистики: ' + response.data.message, 'error');
+                }
+            },
+            error: function(xhr, status, error) {
+                showNotice('Ошибка обновления статистики: ' + error, 'error');
+            },
+            complete: function() {
+                setButtonLoading($btn, false);
+            }
+        });
+    }
+    
+    // Отвязка товара
+    function handleUnlinkProduct() {
+        const $btn = $(this);
+        const productId = $btn.data('product-id');
+        const productName = $btn.data('product-name');
+        
+        if (!confirm('Вы уверены, что хотите отвязать товар "' + productName + '" от Slimrate?\n\nЭто действие можно будет отменить только повторной привязкой.')) {
+            return;
+        }
+        
+        setButtonLoading($btn, true);
+        
+        $.ajax({
+            url: slimrateAjax.ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'slimrate_unlink_product',
+                woo_id: productId,
+                nonce: slimrateAjax.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    showNotice(response.data.message, 'success');
+                    
+                    // Удаляем строку из таблицы
+                    $btn.closest('tr').fadeOut(function() {
+                        $(this).remove();
+                    });
+                    
+                    // Обновляем статистику через 2 секунды
+                    setTimeout(function() {
+                        location.reload();
+                    }, 2000);
+                } else {
+                    showNotice('Ошибка отвязки: ' + response.data.message, 'error');
+                }
+            },
+            error: function(xhr, status, error) {
+                showNotice('Ошибка отвязки товара: ' + error, 'error');
             },
             complete: function() {
                 setButtonLoading($btn, false);
@@ -581,6 +704,180 @@ jQuery(document).ready(function($) {
             if (e.key === 'Escape') {
                 $('.diagnostics-modal, .diagnostics-overlay').remove();
                 $(document).off('keydown.diagnostics');
+            }
+        });
+    }
+    
+    // Функция отображения товаров для привязки
+    function showLinkableProductsModal(data) {
+        // Удаляем существующее модальное окно
+        $('.linkable-modal').remove();
+        
+        const linkableProducts = data.linkable_products;
+        
+        let productsHtml = '';
+        
+        if (linkableProducts.length === 0) {
+            productsHtml = '<p style="text-align: center; color: #666;">Товары для привязки не найдены</p>';
+        } else {
+            linkableProducts.forEach(function(item, index) {
+                const slimrate = item.slimrate_item;
+                const matches = item.woo_matches;
+                
+                productsHtml += `
+                    <div style="border: 1px solid #ddd; border-radius: 4px; margin-bottom: 15px; padding: 15px;">
+                        <h4 style="margin: 0 0 10px 0; color: #2271b1;">
+                            🔍 ${slimrate.name}
+                            ${slimrate.sku ? '<small style="color: #666;"> (SKU: ' + slimrate.sku + ')</small>' : ''}
+                        </h4>
+                        ${slimrate.category ? '<p style="margin: 5px 0; color: #666;"><strong>Категория:</strong> ' + slimrate.category + '</p>' : ''}
+                        
+                        <div style="margin-top: 10px;">
+                            <strong>Найденные совпадения:</strong>
+                `;
+                
+                matches.forEach(function(match, matchIndex) {
+                    const woo = match.woo_product;
+                    const score = match.match_score;
+                    const reasons = match.match_reasons.join(', ');
+                    
+                    const scoreColor = score >= 100 ? 'green' : score >= 50 ? 'orange' : '#666';
+                    
+                    productsHtml += `
+                        <div style="margin: 8px 0; padding: 8px; background: #f9f9f9; border-radius: 4px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <strong>${woo.name}</strong>
+                                    ${woo.sku ? '<small style="color: #666;"> (SKU: ' + woo.sku + ')</small>' : ''}
+                                    <br><small style="color: #666;">${reasons}</small>
+                                </div>
+                                <div style="text-align: right;">
+                                    <span style="color: ${scoreColor}; font-weight: bold;">Рейтинг: ${score}</span>
+                                    <br><button class="button button-small link-product" 
+                                        data-slimrate-id="${slimrate.id}" 
+                                        data-woo-id="${woo.id}"
+                                        style="margin-top: 5px;">
+                                        🔗 Привязать
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                productsHtml += `
+                        </div>
+                    </div>
+                `;
+            });
+        }
+        
+        const modalHtml = `
+            <div class="linkable-modal" style="
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: white;
+                border: 1px solid #ccc;
+                border-radius: 8px;
+                padding: 20px;
+                max-width: 800px;
+                width: 95%;
+                max-height: 80vh;
+                overflow-y: auto;
+                z-index: 10001;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            ">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 style="margin: 0;">🔗 Товары для привязки</h2>
+                    <button class="close-linkable" style="
+                        background: none;
+                        border: none;
+                        font-size: 24px;
+                        cursor: pointer;
+                        color: #666;
+                    ">&times;</button>
+                </div>
+                
+                <div style="margin-bottom: 15px; padding: 10px; background: #f0f6fc; border-radius: 4px;">
+                    <p style="margin: 0;"><strong>Статистика:</strong></p>
+                    <ul style="margin: 5px 0;">
+                        <li>Товаров в Slimrate: ${data.total_slimrate}</li>
+                        <li>Не привязанных товаров WooCommerce: ${data.total_woo_unlinked}</li>
+                        <li>Найдено для привязки: ${data.linkable_count}</li>
+                    </ul>
+                </div>
+                
+                <div style="max-height: 500px; overflow-y: auto;">
+                    ${productsHtml}
+                </div>
+                
+                <div style="text-align: center; margin-top: 15px;">
+                    <button class="button button-primary close-linkable">Закрыть</button>
+                </div>
+            </div>
+            <div class="linkable-overlay" style="
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.5);
+                z-index: 10000;
+            "></div>
+        `;
+        
+        $('body').append(modalHtml);
+        
+        // Обработчики закрытия модального окна
+        $('.close-linkable, .linkable-overlay').on('click', function() {
+            $('.linkable-modal, .linkable-overlay').remove();
+        });
+        
+        // Закрытие по ESC
+        $(document).on('keydown.linkable', function(e) {
+            if (e.key === 'Escape') {
+                $('.linkable-modal, .linkable-overlay').remove();
+                $(document).off('keydown.linkable');
+            }
+        });
+        
+        // Обработчик привязки товара
+        $('.link-product').on('click', function() {
+            const slimrateId = $(this).data('slimrate-id');
+            const wooId = $(this).data('woo-id');
+            const $btn = $(this);
+            
+            if (confirm('Привязать товар WooCommerce ID: ' + wooId + ' к Slimrate ID: ' + slimrateId + '?')) {
+                setButtonLoading($btn, true);
+                
+                // Здесь можно добавить AJAX запрос для привязки
+                // Пока просто обновляем meta поле
+                $.ajax({
+                    url: slimrateAjax.ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'slimrate_link_product',
+                        woo_id: wooId,
+                        slimrate_id: slimrateId,
+                        nonce: slimrateAjax.nonce
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            $btn.text('✅ Привязан').prop('disabled', true);
+                            showNotice('Товар успешно привязан!', 'success');
+                        } else {
+                            showNotice('Ошибка привязки: ' + response.data.message, 'error');
+                        }
+                    },
+                    error: function() {
+                        showNotice('Ошибка привязки товара', 'error');
+                    },
+                    complete: function() {
+                        setButtonLoading($btn, false);
+                    }
+                });
             }
         });
     }

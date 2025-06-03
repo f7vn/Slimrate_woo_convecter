@@ -126,12 +126,16 @@ class Woo_Sync_Manager {
     private function process_simple_product($item) {
         $search_id = isset($item['rootId']) ? $item['rootId'] : $item['id'];
         
-        // Ищем существующий товар в WooCommerce
-        $existing_product = $this->find_woo_product_by_slimrate_id($search_id);
+        // Ищем существующий товар в WooCommerce по разным критериям
+        $existing_product = $this->find_existing_woo_product($item, $search_id);
         
         if ($existing_product) {
             // Обновляем существующий товар
             $this->update_woo_product($existing_product, $item);
+            
+            // Убеждаемся, что у товара есть правильный slimrate_id
+            $this->ensure_slimrate_id($existing_product, $search_id);
+            
             return 'updated';
         } else {
             // Создаем новый товар
@@ -141,12 +145,58 @@ class Woo_Sync_Manager {
     }
     
     /**
-     * Обработать вариацию товара
+     * Найти существующий товар WooCommerce по множественным критериям
      */
-    private function process_variation($item) {
-        // TODO: Реализовать обработку вариаций
-        $this->log_message('Обработка вариаций пока не реализована для товара: ' . $item['id'], 'warning');
-        return false;
+    private function find_existing_woo_product($item, $search_id) {
+        $strategy = get_option('product_matching_strategy', 'auto');
+        $enable_linking = get_option('enable_product_linking', true);
+        
+        // 1. Всегда сначала ищем по slimrate_id (самый надежный способ)
+        $product = $this->find_woo_product_by_slimrate_id($search_id);
+        if ($product) {
+            $this->log_message('Найден товар по Slimrate ID: ' . $search_id . ' -> WooCommerce ID: ' . $product->get_id());
+            return $product;
+        }
+        
+        // Если автопривязка отключена или стратегия только по ID - выходим
+        if (!$enable_linking || $strategy === 'slimrate_id_only') {
+            return null;
+        }
+        
+        // 2. Ищем по SKU (если стратегия это поддерживает)
+        if (in_array($strategy, ['sku_priority', 'auto', 'aggressive']) && !empty($item['skuCode'])) {
+            $product = $this->find_woo_product_by_sku($item['skuCode']);
+            if ($product) {
+                $this->log_message('Найден товар по SKU: ' . $item['skuCode'] . ' -> WooCommerce ID: ' . $product->get_id() . ' (будет привязан к Slimrate ID: ' . $search_id . ')');
+                return $product;
+            }
+        }
+        
+        // 3. Ищем по точному названию товара (для auto и aggressive)
+        if (in_array($strategy, ['auto', 'aggressive'])) {
+            $product_name = $this->get_product_name($item);
+            if (!empty($product_name) && $product_name !== 'Товар без названия') {
+                $product = $this->find_woo_product_by_name($product_name);
+                if ($product) {
+                    $this->log_message('Найден товар по названию: "' . $product_name . '" -> WooCommerce ID: ' . $product->get_id() . ' (будет привязан к Slimrate ID: ' . $search_id . ')');
+                    return $product;
+                }
+            }
+        }
+        
+        // 4. Ищем по комбинации названия и категории (только для aggressive)
+        if ($strategy === 'aggressive' && !empty($item['category']['displayName'])) {
+            $product_name = $this->get_product_name($item);
+            $product = $this->find_woo_product_by_name_and_category($product_name, $item['category']['displayName']);
+            if ($product) {
+                $this->log_message('Найден товар по названию и категории: "' . $product_name . '" в "' . $item['category']['displayName'] . '" -> WooCommerce ID: ' . $product->get_id() . ' (будет привязан к Slimrate ID: ' . $search_id . ')');
+                return $product;
+            }
+        }
+        
+        // Товар не найден
+        $this->log_message('Товар не найден по критериям стратегии "' . $strategy . '" для Slimrate ID: ' . $search_id);
+        return null;
     }
     
     /**
@@ -172,6 +222,117 @@ class Woo_Sync_Manager {
         }
         
         return null;
+    }
+    
+    /**
+     * Найти товар WooCommerce по SKU
+     */
+    private function find_woo_product_by_sku($sku) {
+        if (empty($sku)) {
+            return null;
+        }
+        
+        $product_id = wc_get_product_id_by_sku($sku);
+        
+        if ($product_id) {
+            $product = wc_get_product($product_id);
+            // Проверяем, что у товара еще нет slimrate_id (чтобы не перезаписать существующую связь)
+            if ($product && empty(get_post_meta($product_id, 'slimrate_id', true))) {
+                return $product;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Найти товар WooCommerce по точному названию
+     */
+    private function find_woo_product_by_name($name) {
+        if (empty($name)) {
+            return null;
+        }
+        
+        global $wpdb;
+        
+        // Ищем товары по точному названию через SQL запрос
+        $product_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT p.ID FROM {$wpdb->posts} p 
+            LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'slimrate_id'
+            WHERE p.post_type = 'product' 
+            AND p.post_status = 'publish' 
+            AND p.post_title = %s 
+            AND pm.meta_id IS NULL
+            LIMIT 1",
+            $name
+        ));
+        
+        if ($product_id) {
+            return wc_get_product($product_id);
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Найти товар WooCommerce по названию и категории
+     */
+    private function find_woo_product_by_name_and_category($name, $category_name) {
+        if (empty($name) || empty($category_name)) {
+            return null;
+        }
+        
+        // Сначала найдем категорию
+        $category = get_term_by('name', $category_name, 'product_cat');
+        
+        if (!$category) {
+            return null;
+        }
+        
+        global $wpdb;
+        
+        // Ищем товары по названию и категории через SQL
+        $product_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT p.ID FROM {$wpdb->posts} p 
+            LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'slimrate_id'
+            LEFT JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
+            LEFT JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'product_cat'
+            WHERE p.post_type = 'product' 
+            AND p.post_status = 'publish' 
+            AND p.post_title = %s 
+            AND tt.term_id = %d
+            AND pm.meta_id IS NULL
+            LIMIT 1",
+            $name,
+            $category->term_id
+        ));
+        
+        if ($product_id) {
+            return wc_get_product($product_id);
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Убедиться, что у товара есть правильный slimrate_id
+     */
+    private function ensure_slimrate_id($product, $slimrate_id) {
+        $current_slimrate_id = get_post_meta($product->get_id(), 'slimrate_id', true);
+        
+        if (empty($current_slimrate_id) || $current_slimrate_id !== $slimrate_id) {
+            update_post_meta($product->get_id(), 'slimrate_id', $slimrate_id);
+            $this->log_message('Обновлен slimrate_id для товара WooCommerce ID: ' . $product->get_id() . ' -> ' . $slimrate_id);
+        }
+    }
+    
+    /**
+     * Обработать вариацию товара
+     */
+    private function process_variation($item) {
+        // TODO: Реализовать обработку вариаций
+        $this->log_message('Обработка вариаций пока не реализована для товара: ' . $item['id'], 'warning');
+        return false;
     }
     
     /**

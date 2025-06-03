@@ -22,6 +22,21 @@ function getChangedFieldsLog(oldValues, newValues, fieldsToCompare) {
                 changes.push(`_wpm_gtin_code (старое: '${oldGtin}', новое: '${newGtin}')`);
             }
             // Можно добавить сравнение других meta-полей если это станет необходимо
+        } else if (fieldKey === 'images') {
+            // Особая обработка для изображений
+            const oldImagesCount = Array.isArray(oldValue) ? oldValue.length : 0;
+            const newImagesCount = Array.isArray(newValue) ? newValue.length : 0;
+            
+            if (oldImagesCount !== newImagesCount) {
+                changes.push(`images (было: ${oldImagesCount}, стало: ${newImagesCount} изображений)`);
+            } else if (Array.isArray(newValue) && newValue.length > 0) {
+                // Проверяем изменения в URL изображений
+                const oldUrls = Array.isArray(oldValue) ? oldValue.map(img => img.src || img).join(';') : '';
+                const newUrls = newValue.map(img => img.src || img).join(';');
+                if (oldUrls !== newUrls) {
+                    changes.push(`images (изображения изменены)`);
+                }
+            }
         } else if (typeof oldValue === 'object' && oldValue !== null && typeof newValue === 'object' && newValue !== null) {
             // Для других потенциальных объектов - простое сравнение через JSON.stringify
             if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) {
@@ -42,58 +57,190 @@ function addUpdateLog(message, type = 'info') {
     addLogEntry(message, type, 'system');
 }
 
+// Конфигурация поиска товаров (глобально доступная)
+window.SEARCH_CONFIG = {
+    enableProductLinking: true,  // Включить автопривязку
+    enableProductCreation: true, // Включить автосоздание товаров
+    enableImageSync: true,       // Включить синхронизацию изображений
+    matchingStrategy: 'auto'     // auto, sku_priority, slimrate_id_only, aggressive
+};
+
+// Функция для обновления конфигурации извне
+export function updateSearchConfig(newConfig) {
+    window.SEARCH_CONFIG = { ...window.SEARCH_CONFIG, ...newConfig };
+    addUpdateLog(`Конфигурация поиска обновлена: ${JSON.stringify(window.SEARCH_CONFIG)}`, 'info');
+}
+
+// Улучшенная функция поиска товара с множественными критериями
 async function findWooProductBySlimrateId(slimrateId) {
     const baseUrl = `${WOOCOMMERCE_SITE.replace(/\/$/, '')}/wp-json/wc/v3/products`;
-    const searchUrl = `${baseUrl}?meta_key=slimrate_id&meta_value=${encodeURIComponent(slimrateId)}`;
     const auth = btoa(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`);
     
-    addUpdateLog(`Поиск товара по URL: ${searchUrl}`, 'debug');
+    // 1. Сначала ищем по slimrate_id (самый надежный способ)
+    const searchUrl = `${baseUrl}?meta_key=slimrate_id&meta_value=${encodeURIComponent(slimrateId)}`;
+    addUpdateLog(`Поиск товара по Slimrate ID: ${slimrateId}`, 'debug');
     
     const resp = await fetch(searchUrl, {
         headers: { 'Authorization': `Basic ${auth}` }
     });
     const data = await resp.json();
     
-    addUpdateLog(`Ответ WooCommerce API: найдено ${Array.isArray(data) ? data.length : 0} товаров`, 'debug');
-    
     if (Array.isArray(data) && data.length > 0) {
-        // WooCommerce API часто игнорирует meta_key/meta_value, поэтому ВСЕГДА фильтруем на клиенте
-        addUpdateLog(`Фильтруем товары на клиенте по slimrate_id='${slimrateId}'...`, 'info');
-        
+        // Фильтруем на клиенте для точности
         const filtered = data.filter(product => {
             const meta = product.meta_data || [];
-            const hasSlimrateId = meta.some(m => m.key === 'slimrate_id' && String(m.value) === String(slimrateId));
-            
-            // Логируем для первых нескольких товаров для отладки
-            if (data.indexOf(product) < 3) {
-                const slimrateMetaValue = meta.find(m => m.key === 'slimrate_id')?.value || 'отсутствует';
-                addUpdateLog(`Товар ${product.id}: slimrate_id='${slimrateMetaValue}', совпадает: ${hasSlimrateId}`, 'debug');
-            }
-            
-            return hasSlimrateId;
+            return meta.some(m => m.key === 'slimrate_id' && String(m.value) === String(slimrateId));
         });
-        
-        addUpdateLog(`После фильтрации на клиенте найдено: ${filtered.length} товаров`, filtered.length > 0 ? 'success' : 'warning');
         
         if (filtered.length > 0) {
             const foundProduct = filtered[0];
-            addUpdateLog(`Используем товар: id=${foundProduct.id}, name='${foundProduct.name}', type=${foundProduct.type}`, 'success');
+            addUpdateLog(`✅ Найден товар по Slimrate ID: ${foundProduct.id} - "${foundProduct.name}"`, 'success');
             return foundProduct;
-        } else {
-            addUpdateLog(`Товар с slimrate_id='${slimrateId}' не найден среди ${data.length} товаров`, 'error');
-            
-            // АЛЬТЕРНАТИВНЫЙ МЕТОД: если ничего не найдено, можно попробовать получить все товары
-            // и искать среди них (раскомментируйте при необходимости):
-            // addUpdateLog(`Пробуем альтернативный поиск - получение всех товаров...`, 'info');
-            // const allProductsResp = await fetch(`${baseUrl}?per_page=100`, { headers: { 'Authorization': `Basic ${auth}` } });
-            // const allProducts = await allProductsResp.json();
-            // return searchInProducts(allProducts, slimrateId);
         }
-    } else {
-        addUpdateLog(`WooCommerce API вернул пустой ответ или ошибку: ${JSON.stringify(data)}`, 'error');
     }
     
+    addUpdateLog(`Товар с Slimrate ID ${slimrateId} не найден`, 'info');
     return null;
+}
+
+// Новая функция для поиска товаров с множественными критериями
+async function findWooProductByMultipleCriteria(slimrateItem) {
+    if (!window.SEARCH_CONFIG.enableProductLinking || window.SEARCH_CONFIG.matchingStrategy === 'slimrate_id_only') {
+        return null;
+    }
+    
+    const baseUrl = `${WOOCOMMERCE_SITE.replace(/\/$/, '')}/wp-json/wc/v3/products`;
+    const auth = btoa(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`);
+    
+    addUpdateLog(`🔍 Начинаем расширенный поиск товара (стратегия: ${window.SEARCH_CONFIG.matchingStrategy})`, 'info');
+    
+    // 2. Поиск по SKU (если доступен)
+    if (['sku_priority', 'auto', 'aggressive'].includes(window.SEARCH_CONFIG.matchingStrategy) && slimrateItem.skuCode) {
+        addUpdateLog(`Поиск по SKU: ${slimrateItem.skuCode}`, 'debug');
+        
+        const skuSearchUrl = `${baseUrl}?sku=${encodeURIComponent(slimrateItem.skuCode)}`;
+        const skuResp = await fetch(skuSearchUrl, {
+            headers: { 'Authorization': `Basic ${auth}` }
+        });
+        const skuData = await skuResp.json();
+        
+        if (Array.isArray(skuData) && skuData.length > 0) {
+            // Проверяем, что товар еще не привязан к другому Slimrate ID
+            const unlinkedProduct = skuData.find(product => {
+                const meta = product.meta_data || [];
+                return !meta.some(m => m.key === 'slimrate_id' && m.value);
+            });
+            
+            if (unlinkedProduct) {
+                addUpdateLog(`✅ Найден товар по SKU: ${unlinkedProduct.id} - "${unlinkedProduct.name}"`, 'success');
+                return unlinkedProduct;
+            }
+        }
+    }
+    
+    // 3. Поиск по названию (для auto и aggressive)
+    if (['auto', 'aggressive'].includes(window.SEARCH_CONFIG.matchingStrategy)) {
+        const productName = getSlimrateProductName(slimrateItem);
+        
+        if (productName && productName !== 'Товар без названия') {
+            addUpdateLog(`Поиск по названию: "${productName}"`, 'debug');
+            
+            const nameSearchUrl = `${baseUrl}?search=${encodeURIComponent(productName)}&per_page=20`;
+            const nameResp = await fetch(nameSearchUrl, {
+                headers: { 'Authorization': `Basic ${auth}` }
+            });
+            const nameData = await nameResp.json();
+            
+            if (Array.isArray(nameData) && nameData.length > 0) {
+                // Ищем точное совпадение названия среди непривязанных товаров
+                const exactMatch = nameData.find(product => {
+                    const meta = product.meta_data || [];
+                    const isUnlinked = !meta.some(m => m.key === 'slimrate_id' && m.value);
+                    const nameMatch = product.name.toLowerCase() === productName.toLowerCase();
+                    return isUnlinked && nameMatch;
+                });
+                
+                if (exactMatch) {
+                    addUpdateLog(`✅ Найден товар по точному названию: ${exactMatch.id} - "${exactMatch.name}"`, 'success');
+                    return exactMatch;
+                }
+            }
+        }
+    }
+    
+    // 4. Поиск по названию + категории (только для aggressive)
+    if (window.SEARCH_CONFIG.matchingStrategy === 'aggressive' && slimrateItem.category?.displayName) {
+        const productName = getSlimrateProductName(slimrateItem);
+        const categoryName = slimrateItem.category.displayName;
+        
+        addUpdateLog(`Агрессивный поиск по названию + категории: "${productName}" в "${categoryName}"`, 'debug');
+        
+        // Сначала найдем категорию
+        const category = await findWooCategoryByName(categoryName);
+        if (category) {
+            const categorySearchUrl = `${baseUrl}?category=${category.id}&search=${encodeURIComponent(productName)}&per_page=10`;
+            const categoryResp = await fetch(categorySearchUrl, {
+                headers: { 'Authorization': `Basic ${auth}` }
+            });
+            const categoryData = await categoryResp.json();
+            
+            if (Array.isArray(categoryData) && categoryData.length > 0) {
+                const categoryMatch = categoryData.find(product => {
+                    const meta = product.meta_data || [];
+                    return !meta.some(m => m.key === 'slimrate_id' && m.value);
+                });
+                
+                if (categoryMatch) {
+                    addUpdateLog(`✅ Найден товар по названию + категории: ${categoryMatch.id} - "${categoryMatch.name}"`, 'success');
+                    return categoryMatch;
+                }
+            }
+        }
+    }
+    
+    addUpdateLog(`❌ Товар не найден по расширенным критериям`, 'warning');
+    return null;
+}
+
+// Вспомогательная функция для получения названия товара из Slimrate
+function getSlimrateProductName(item) {
+    if (item.rootName) return item.rootName;
+    if (item.wooInfo?.name) return item.wooInfo.name;
+    if (item.displayName) return item.displayName;
+    return 'Товар без названия';
+}
+
+// Функция для установки slimrate_id у найденного товара
+async function linkProductToSlimrate(wooProductId, slimrateId) {
+    const url = `${WOOCOMMERCE_SITE.replace(/\/$/, '')}/wp-json/wc/v3/products/${wooProductId}`;
+    const auth = btoa(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`);
+    
+    const updateData = {
+        meta_data: [
+            {
+                key: 'slimrate_id',
+                value: slimrateId
+            }
+        ]
+    };
+    
+    const resp = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${auth}`
+        },
+        body: JSON.stringify(updateData)
+    });
+    
+    const result = await resp.json();
+    if (result.id) {
+        addUpdateLog(`🔗 Товар WooCommerce ID ${wooProductId} привязан к Slimrate ID ${slimrateId}`, 'success');
+        return true;
+    } else {
+        addUpdateLog(`❌ Ошибка привязки товара: ${JSON.stringify(result)}`, 'error');
+        return false;
+    }
 }
 
 async function updateWooProduct(wooProductId, updateData) {
@@ -205,15 +352,181 @@ async function updateProductCategory(slimrateCategory, productUpdateData, wooPro
     }
 }
 
-// Функция обработки товара  
+// Функция для очистки пустых полей из объекта перед отправкой в WooCommerce
+function cleanEmptyFields(obj) {
+    const cleaned = {};
+    
+    for (const [key, value] of Object.entries(obj)) {
+        // Исключаем null, undefined, пустые строки и пустые массивы
+        if (value !== null && value !== undefined && value !== '' && 
+            !(Array.isArray(value) && value.length === 0)) {
+            cleaned[key] = value;
+        }
+    }
+    
+    return cleaned;
+}
+
+// Функция для создания нового товара в WooCommerce
+async function createWooProduct(item) {
+    const url = `${WOOCOMMERCE_SITE.replace(/\/$/, '')}/wp-json/wc/v3/products`;
+    const auth = btoa(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`);
+    
+    // Определяем правильное название товара
+    let productName = 'Новый товар';
+    if (item.rootName) {
+        productName = item.rootName;
+    } else if (item.wooInfo && item.wooInfo.name) {
+        productName = item.wooInfo.name;
+    } else if (item.displayName) {
+        productName = item.displayName;
+    }
+    
+    // Базовые данные товара
+    const productData = {
+        name: productName,
+        type: 'simple',
+        status: 'publish',
+        catalog_visibility: 'visible',
+        sku: item.skuCode || '',
+        meta_data: [
+            {
+                key: 'slimrate_id',
+                value: (item.varName === "" || !item.varName) ? item.rootId : item.id
+            }
+        ]
+    };
+    
+    // Управление складом: по умолчанию отключено, но учитываем если пользователь указал количество
+    const itemData = item.items && item.items[0] ? item.items[0] : item; // Для совместимости с разными структурами
+    const startQuantity = itemData.startQuantity;
+    
+    if (startQuantity !== undefined && startQuantity !== null && startQuantity !== "" && Number(startQuantity) >= 0) {
+        // Пользователь указал количество в Slimrate - включаем управление складом
+        const quantityNum = Number(startQuantity);
+        productData.manage_stock = true;
+        productData.stock_quantity = quantityNum;
+        productData.stock_status = quantityNum > 0 ? 'instock' : 'outofstock';
+        addUpdateLog(`Пользователь указал количество ${quantityNum} - включаем управление складом`, 'info');
+    } else {
+        // Количество не указано - отключаем управление складом, товар всегда доступен
+        productData.manage_stock = false;
+        productData.stock_status = 'instock';
+        addUpdateLog(`Количество не указано - управление складом отключено, товар всегда доступен`, 'info');
+    }
+    
+    // Устанавливаем цены - поддерживаем строковые значения с десятичными дробями
+    let hasPrices = false;
+    const priceValue = parseFloat(item.price);
+    const strikePriceValue = parseFloat(item.strikeThroughPrice);
+    
+    if (item.strikeThroughPrice && strikePriceValue > 0 && item.price && priceValue > 0) {
+        // Есть и обычная цена и цена распродажи
+        productData.regular_price = String(item.strikeThroughPrice);
+        productData.sale_price = String(item.price);
+        addUpdateLog(`Устанавливаем цены: обычная=${item.strikeThroughPrice}, распродажа=${item.price}`, 'info');
+        hasPrices = true;
+    } else if (item.price && priceValue > 0) {
+        // Только обычная цена
+        productData.regular_price = String(item.price);
+        // НЕ устанавливаем sale_price вообще, чтобы не ломать запрос
+        addUpdateLog(`Устанавливаем обычную цену: ${item.price}`, 'info');
+        hasPrices = true;
+    }
+    
+    if (!hasPrices) {
+        addUpdateLog(`Цены не указаны в Slimrate, товар будет создан без цен`, 'warning');
+    }
+    
+    // Добавляем описания если есть
+    if (item.wooInfo) {
+        if (item.wooInfo.description) {
+            productData.description = item.wooInfo.description;
+        }
+        if (item.wooInfo.shortDescription) {
+            productData.short_description = item.wooInfo.shortDescription;
+        }
+    }
+    
+    // Обрабатываем изображения
+    const images = processSlimrateImages(item);
+    if (window.SEARCH_CONFIG.enableImageSync && images.length > 0) {
+        productData.images = images;
+        addUpdateLog(`Добавляем ${images.length} изображений к товару`, 'info');
+    } else if (!window.SEARCH_CONFIG.enableImageSync) {
+        addUpdateLog(`Синхронизация изображений отключена в настройках`, 'info');
+    }
+    
+    // Обрабатываем категорию
+    if (item.category && item.category.displayName) {
+        const categoryName = item.category.displayName;
+        let wooCategory = await findWooCategoryByName(categoryName);
+        
+        if (!wooCategory) {
+            addUpdateLog(`Создаём новую категорию: "${categoryName}"`, 'info');
+            wooCategory = await createWooCategory(categoryName);
+        }
+        
+        if (wooCategory && wooCategory.id) {
+            productData.categories = [{ id: wooCategory.id }];
+            addUpdateLog(`Товар будет создан с категорией: "${categoryName}" (ID: ${wooCategory.id})`, 'info');
+        }
+    }
+    
+    addUpdateLog(`Создание нового товара в WooCommerce: "${productName}"`, 'info');
+    addUpdateLog(`Данные для создания: ${JSON.stringify(productData, null, 2)}`, 'debug');
+    
+    // Очищаем пустые поля перед отправкой
+    const cleanedProductData = cleanEmptyFields(productData);
+    addUpdateLog(`Очищенные данные для отправки: ${JSON.stringify(cleanedProductData, null, 2)}`, 'debug');
+    
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${auth}`
+        },
+        body: JSON.stringify(cleanedProductData)
+    });
+    
+    const result = await resp.json();
+    
+    if (result.id) {
+        addUpdateLog(`✅ Товар успешно создан в WooCommerce: ID ${result.id} - "${result.name}"`, 'success');
+        addUpdateLog(`🔗 Товар автоматически привязан к Slimrate ID: ${productData.meta_data[0].value}`, 'success');
+        return result;
+    } else {
+        addUpdateLog(`❌ Ошибка создания товара: ${result.message || JSON.stringify(result)}`, 'error');
+        return null;
+    }
+}
+
+// Функция обработки товара
 async function processProduct(item) {
-    // Для простых товаров (varName пустое) ищем по rootId, для остальных по id
     const searchId = (item.varName === "" || !item.varName) ? item.rootId : item.id;
     
     addUpdateLog(`=== ОБРАБОТКА ТОВАРА ${item.id} ===`, 'info');
     addUpdateLog(`Простой товар (varName пустое): ищем по rootId="${item.rootId}" вместо id="${item.id}"`, 'info');
+    
+    // Сначала ищем по slimrate_id (основной способ)
     addUpdateLog(`Ищем товар в Woo по slimrate_id: ${searchId}`);
-    const wooProduct = await findWooProductBySlimrateId(searchId);
+    let wooProduct = await findWooProductBySlimrateId(searchId);
+    
+    if (!wooProduct) {
+        // Если не найден по slimrate_id, пробуем поиск по множественным критериям
+        addUpdateLog(`Товар не найден по Slimrate ID, запускаем расширенный поиск...`);
+        wooProduct = await findWooProductByMultipleCriteria(item);
+        
+        if (wooProduct) {
+            // Если нашли по альтернативным критериям, привязываем к Slimrate
+            addUpdateLog(`Товар найден по альтернативным критериям, привязываем к Slimrate ID: ${searchId}`);
+            const linked = await linkProductToSlimrate(wooProduct.id, searchId);
+            if (!linked) {
+                addUpdateLog(`Не удалось привязать товар, пропускаем обновление`, 'error');
+                return;
+            }
+        }
+    }
 
     if (wooProduct) {
         addUpdateLog(`WooCommerce product найден: id=${wooProduct.id}, name='${wooProduct.name}', type=${wooProduct.type}`, 'success');
@@ -264,34 +577,47 @@ async function processProduct(item) {
            
            addUpdateLog(`Обновление простого товара: используем данные из корня объекта (API /items/read/tablet)`, 'info');
            
-           // Исправляем логику цен для простых товаров
-           if (simpleItem.strikeThroughPrice && simpleItem.price) {
+           // Улучшенная логика цен для простых товаров - поддерживаем строковые значения с десятичными дробями
+           let hasPriceUpdates = false;
+           const priceValue = parseFloat(simpleItem.price);
+           const strikePriceValue = parseFloat(simpleItem.strikeThroughPrice);
+           
+           if (simpleItem.strikeThroughPrice && strikePriceValue > 0 && simpleItem.price && priceValue > 0) {
                // Если есть зачеркнутая цена, то это обычная цена, а price - цена распродажи
                productUpdateData.regular_price = String(simpleItem.strikeThroughPrice);
                productUpdateData.sale_price = String(simpleItem.price);
-           } else if (simpleItem.price) {
+               addUpdateLog(`Обновляем цены: обычная=${simpleItem.strikeThroughPrice}, распродажа=${simpleItem.price}`, 'info');
+               hasPriceUpdates = true;
+           } else if (simpleItem.price && priceValue > 0) {
                // Если только обычная цена
                productUpdateData.regular_price = String(simpleItem.price);
-               productUpdateData.sale_price = '';
-           } else {
-               // Сохраняем текущие цены
-               productUpdateData.regular_price = wooProduct.regular_price;
-               productUpdateData.sale_price = wooProduct.sale_price;
+               // НЕ устанавливаем sale_price вообще, чтобы не ломать запрос
+               addUpdateLog(`Обновляем только обычную цену: ${simpleItem.price}`, 'info');
+               hasPriceUpdates = true;
+           }
+           
+           if (!hasPriceUpdates) {
+               addUpdateLog(`Цены не указаны в Slimrate, поля цен исключены из запроса`, 'info');
            }
            
            // Обновляем SKU
            productUpdateData.sku = simpleItem.skuCode || wooProduct.sku;
            
-           // Обновляем количество на складе  
-           const newQuantity = simpleItem.quantity !== undefined && simpleItem.quantity !== null ? 
-               Number(simpleItem.quantity) : wooProduct.stock_quantity;
+           // Управление складом: по умолчанию отключено, но учитываем если пользователь указал количество
+           const startQuantity = simpleItem.startQuantity;
            
-           productUpdateData.stock_quantity = newQuantity;
-           
-           // Управление складом
-           if (productUpdateData.stock_quantity !== null && productUpdateData.stock_quantity !== undefined) {
+           if (startQuantity !== undefined && startQuantity !== null && startQuantity !== "" && Number(startQuantity) >= 0) {
+               // Пользователь указал количество в Slimrate - включаем управление складом
+               const quantityNum = Number(startQuantity);
                productUpdateData.manage_stock = true;
-               productUpdateData.stock_status = productUpdateData.stock_quantity > 0 ? 'instock' : 'outofstock';
+               productUpdateData.stock_quantity = quantityNum;
+               productUpdateData.stock_status = quantityNum > 0 ? 'instock' : 'outofstock';
+               addUpdateLog(`Пользователь указал количество ${quantityNum} - включаем управление складом`, 'info');
+           } else {
+               // Количество не указано - отключаем управление складом, товар всегда доступен
+               productUpdateData.manage_stock = false;
+               productUpdateData.stock_status = 'instock';
+               addUpdateLog(`Количество не указано - управление складом отключено, товар всегда доступен`, 'info');
            }
            
            // Обновляем описания из wooInfo если есть
@@ -304,11 +630,37 @@ async function processProduct(item) {
                }
            }
            
-           addUpdateLog(`Обновление простого товара - цены: regular=${productUpdateData.regular_price}, sale=${productUpdateData.sale_price}, количество: ${productUpdateData.stock_quantity}, SKU: ${productUpdateData.sku}`, 'info');
+           addUpdateLog(`Обновление простого товара - цены: regular=${productUpdateData.regular_price}, sale=${productUpdateData.sale_price}, управление складом: ${productUpdateData.manage_stock ? `включено (${productUpdateData.stock_quantity})` : 'отключено'}, SKU: ${productUpdateData.sku}`, 'info');
+        }
+
+        // Обрабатываем изображения для всех типов товаров
+        if (window.SEARCH_CONFIG.enableImageSync) {
+            const images = processSlimrateImages(item);
+            if (images.length > 0) {
+                productUpdateData.images = images;
+                addUpdateLog(`Обновляем изображения товара: ${images.length} изображений`, 'info');
+            } else {
+                addUpdateLog(`Изображения в Slimrate не найдены, оставляем текущие изображения WooCommerce`, 'info');
+            }
+        } else {
+            addUpdateLog(`Синхронизация изображений отключена в настройках`, 'info');
         }
 
         // Логирование и обновление товара
-        const fieldsToLogForProduct = ['name', 'regular_price', 'sale_price', 'sku', 'stock_quantity', 'categories'];
+        const fieldsToLogForProduct = ['name', 'sku', 'categories', 'images', 'manage_stock', 'stock_status'];
+        
+        // Добавляем поля цен только если они присутствуют в данных для обновления
+        if (productUpdateData.hasOwnProperty('regular_price')) {
+            fieldsToLogForProduct.push('regular_price');
+        }
+        if (productUpdateData.hasOwnProperty('sale_price')) {
+            fieldsToLogForProduct.push('sale_price');
+        }
+        
+        // Добавляем поле количества только если управление складом включено
+        if (productUpdateData.hasOwnProperty('stock_quantity')) {
+            fieldsToLogForProduct.push('stock_quantity');
+        }
         
         // Специальное логирование для названия
         addUpdateLog(`Сравнение названий: старое="${wooProduct.name}" vs новое="${productUpdateData.name}" (равны: ${wooProduct.name === productUpdateData.name})`, 'info');
@@ -319,7 +671,11 @@ async function processProduct(item) {
         // Логирование полных данных для отправки
         addUpdateLog(`Полные данные для обновления товара: ${JSON.stringify(productUpdateData, null, 2)}`, 'debug');
 
-        const updateResult = await updateWooProduct(wooProduct.id, productUpdateData);
+        // Очищаем пустые поля перед отправкой
+        const cleanedUpdateData = cleanEmptyFields(productUpdateData);
+        addUpdateLog(`Очищенные данные для отправки: ${JSON.stringify(cleanedUpdateData, null, 2)}`, 'debug');
+
+        const updateResult = await updateWooProduct(wooProduct.id, cleanedUpdateData);
         
         if (updateResult && !updateResult.code) {
             addUpdateLog(`Товар WooCommerce обновлён: id=${wooProduct.id} (Slimrate id=${searchId})`, 'success');
@@ -328,7 +684,21 @@ async function processProduct(item) {
         }
 
     } else {
-        addUpdateLog(`Товар с slimrate_id=${searchId} не найден в WooCommerce`, 'error');
+        // Товар не найден - проверяем настройки создания
+        if (window.SEARCH_CONFIG.enableProductCreation) {
+            addUpdateLog(`🆕 Товар с slimrate_id=${searchId} не найден в WooCommerce - создаём новый товар`, 'info');
+            
+            const newProduct = await createWooProduct(item);
+            
+            if (newProduct) {
+                addUpdateLog(`✅ Товар успешно создан и синхронизирован: WC ID ${newProduct.id} ↔ Slimrate ID ${searchId}`, 'success');
+            } else {
+                addUpdateLog(`❌ Не удалось создать товар для Slimrate ID ${searchId}`, 'error');
+            }
+        } else {
+            addUpdateLog(`❌ Товар с slimrate_id=${searchId} не найден в WooCommerce`, 'warning');
+            addUpdateLog(`💡 Автосоздание товаров отключено. Включите его в настройках или создайте товар вручную`, 'info');
+        }
     }
 }
 
@@ -409,8 +779,7 @@ export async function updateItemsFromSlimrate() {
             // offset: 0
         };
 
-        addUpdateLog(`Запрос товаров, обновленных после: ${lastUpdatedAt}`);
-        addUpdateLog(`Отправка запроса на ${slimrateApiUrl} с телом: ${JSON.stringify(slimrateRequestBody)}`);
+        addUpdateLog(`Параметры запроса: updatedAt=${lastUpdatedAt}`);
 
         const response = await fetch(slimrateApiUrl, {
             method: 'POST',
@@ -422,71 +791,99 @@ export async function updateItemsFromSlimrate() {
         });
 
         const data = await response.json();
-        addUpdateLog(`Ответ от Slimrate получен. Статус: ${response.status}`);
 
-        if (!response.ok) {
-             addUpdateLog(`Ошибка запроса к Slimrate: ${response.status} ${response.statusText}. Ответ: ${JSON.stringify(data)}`, 'error');
-             return;
-        }
+        if (response.ok && data.result) {
+            const items = data.result;
+            addUpdateLog(`Получено товаров для обновления: ${items.length}`);
 
-        if (data.result && Array.isArray(data.result) && data.result.length > 0) {
-            addUpdateLog(`Получено записей для обработки: ${data.result.length}`, 'success');
+            let processedCount = 0;
+            let updatedCount = 0;
+            let deletedCount = 0;
+            let errorCount = 0;
 
-            // Логирование структуры первого элемента для диагностики
-            const firstItem = data.result[0];
-            addUpdateLog(`Диагностика первого элемента: hasRootId=${firstItem.hasOwnProperty('rootId')}, rootId="${firstItem.rootId || 'отсутствует'}", hasVariations=${firstItem.hasOwnProperty('variations')}, displayName="${firstItem.displayName || 'отсутствует'}"`, 'debug');
-
-            // НОВАЯ ЛОГИКА: Обрабатываем каждый элемент индивидуально
-            // Вместо определения формата массива, определяем тип каждого элемента отдельно
-            addUpdateLog("Новая логика: обработка каждого элемента индивидуально как товар или вариация", 'info');
-            
-            for (const item of data.result) {
-                // СНАЧАЛА проверяем, удален ли товар в Slimrate
-                if (item.deletedAt) {
-                    // Обработка удаленного товара
-                    await processDeletedProduct(item);
-                    continue; // Переходим к следующему элементу
-                }
-                
-                // Определяем тип текущего элемента (только для НЕ удаленных товаров)
-                // ПРАВИЛЬНАЯ ЛОГИКА: varName пустое = простой товар, varName заполнено = вариация
-                const isVariation = item.hasOwnProperty('varName') && 
-                                   item.varName && 
-                                   item.varName.trim() !== '';
-                
-                const isProduct = !isVariation; // Все остальное считаем товаром
-                
-                addUpdateLog(`Элемент ${item.id}: ${isVariation ? 'ВАРИАЦИЯ' : 'ТОВАР'} (varName="${item.varName || 'пустое'}", rootId="${item.rootId || 'отсутствует'}")`, 'info');
-                
-                if (isVariation) {
-                    // Обработка как вариация
-                    await processVariation(item);
-                } else {
-                    // Обработка как товар
-                    await processProduct(item);
+            for (const item of items) {
+                try {
+                    if (item.deletedAt) {
+                        // Товар удален в Slimrate
+                        await processDeletedProduct(item);
+                        deletedCount++;
+                    } else {
+                        // Проверяем, это вариация или обычный товар
+                        if (item.varName && item.varName.trim() !== "") {
+                            // Это вариация
+                            await processVariation(item);
+                        } else {
+                            // Это простой товар
+                            await processProduct(item);
+                        }
+                        updatedCount++;
+                    }
+                    
+                    processedCount++;
+                } catch (error) {
+                    addUpdateLog(`Ошибка обработки товара ${item.id}: ${error.message}`, 'error');
+                    errorCount++;
                 }
             }
 
-            addUpdateLog("Обработка завершена.", 'success');
-            
-            // ✅ ОБНОВЛЯЕМ updatedAt после успешной обработки
-            saveLastUpdatedAt(syncStartTime);
-            addUpdateLog(`Время последней синхронизации обновлено на: ${syncStartTime}`, 'success');
+            // Сохраняем новое время последней синхронизации только при успешной обработке
+            if (errorCount === 0 || (processedCount > errorCount)) {
+                saveLastUpdatedAt(syncStartTime);
+                addUpdateLog(`Синхронизация завершена. Обработано: ${processedCount}, обновлено: ${updatedCount}, удалено: ${deletedCount}, ошибок: ${errorCount}`, 'success');
+            } else {
+                addUpdateLog(`Синхронизация завершена с ошибками. Время последней синхронизации НЕ обновлено.`, 'warning');
+            }
 
-        } else if (data.result && Array.isArray(data.result) && data.result.length === 0) {
-             addUpdateLog('Получен пустой массив данных от Slimrate. Новых изменений нет.', 'info');
-             
-             // Даже если нет изменений, обновляем время последней синхронизации
-             saveLastUpdatedAt(syncStartTime);
-             addUpdateLog(`Время последней синхронизации обновлено (без изменений): ${syncStartTime}`, 'info');
         } else {
-            addUpdateLog(`Неожиданный формат ответа от Slimrate или пустой результат: ${JSON.stringify(data)}`, 'error');
+            throw new Error(data.message || 'Неизвестная ошибка API');
         }
-    } catch (err) {
-        addUpdateLog(`Критическая ошибка выполнения скрипта: ${err.message}`, 'error');
-        console.error("Update script error:", err);
-    }
-} 
 
-// Экспорт дополнительных функций
-export { resetLastUpdatedAt }; 
+    } catch (error) {
+        addUpdateLog(`Критическая ошибка синхронизации: ${error.message}`, 'error');
+    }
+}
+
+// Функция для обработки изображений из Slimrate
+function processSlimrateImages(item) {
+    const images = [];
+    
+    // Основное изображение товара
+    if (item.image && item.image.trim()) {
+        images.push({
+            src: item.image.trim(),
+            name: 'Основное изображение',
+            alt: item.rootName || item.displayName || 'Изображение товара'
+        });
+    }
+    
+    // Изображения из wooInfo.pictures
+    if (item.wooInfo && Array.isArray(item.wooInfo.pictures)) {
+        item.wooInfo.pictures.forEach((pictureUrl, index) => {
+            if (pictureUrl && pictureUrl.trim()) {
+                images.push({
+                    src: pictureUrl.trim(),
+                    name: `Изображение ${index + 2}`,
+                    alt: `${item.rootName || item.displayName || 'Товар'} - изображение ${index + 2}`
+                });
+            }
+        });
+    }
+    
+    // Убираем дубликаты по URL
+    const uniqueImages = [];
+    const seenUrls = new Set();
+    
+    images.forEach(img => {
+        if (!seenUrls.has(img.src)) {
+            seenUrls.add(img.src);
+            uniqueImages.push(img);
+        }
+    });
+    
+    addUpdateLog(`Обработано изображений: ${uniqueImages.length} (${images.length - uniqueImages.length} дубликатов удалено)`, 'debug');
+    
+    return uniqueImages;
+}
+
+// Экспортируем функции для тестирования и внешнего использования
+export { findWooProductBySlimrateId, findWooProductByMultipleCriteria, linkProductToSlimrate, resetLastUpdatedAt };

@@ -54,7 +54,13 @@ document.addEventListener('DOMContentLoaded', async function() {
         addLogEntry('Системный лог очищен', 'info', 'system');
     });
     
-   
+    // Обработчики для настроек поиска товаров
+    document.getElementById('save-search-settings').addEventListener('click', saveSearchSettings);
+    document.getElementById('test-search').addEventListener('click', testProductSearch);
+    
+    // Загружаем сохраненные настройки поиска
+    loadSearchSettings();
+    
 });
 
 // Функции для работы с отображением времени
@@ -239,6 +245,146 @@ async function loadCategories() {
         }
     } catch (error) {
         addLogEntry(`Ошибка загрузки категорий: ${error.message}`, 'error', 'system');
+    }
+}
+
+// Функции для управления настройками поиска товаров
+
+function loadSearchSettings() {
+    // Загружаем настройки из localStorage
+    const enableLinking = localStorage.getItem('search_enable_linking');
+    const enableCreation = localStorage.getItem('search_enable_creation');
+    const enableImages = localStorage.getItem('search_enable_images');
+    const strategy = localStorage.getItem('search_strategy');
+    
+    // Устанавливаем значения в интерфейсе
+    if (enableLinking !== null) {
+        document.getElementById('enable-linking').checked = enableLinking === 'true';
+    }
+    
+    if (enableCreation !== null) {
+        document.getElementById('enable-creation').checked = enableCreation === 'true';
+    }
+    
+    if (enableImages !== null) {
+        document.getElementById('enable-images').checked = enableImages === 'true';
+    }
+    
+    if (strategy) {
+        document.getElementById('search-strategy').value = strategy;
+    }
+    
+    // Применяем настройки к SEARCH_CONFIG
+    updateSearchConfig();
+    
+    addLogEntry('Настройки поиска товаров загружены', 'info', 'system');
+}
+
+function saveSearchSettings() {
+    const enableLinking = document.getElementById('enable-linking').checked;
+    const enableCreation = document.getElementById('enable-creation').checked;
+    const enableImages = document.getElementById('enable-images').checked;
+    const strategy = document.getElementById('search-strategy').value;
+    
+    // Сохраняем в localStorage
+    localStorage.setItem('search_enable_linking', enableLinking.toString());
+    localStorage.setItem('search_enable_creation', enableCreation.toString());
+    localStorage.setItem('search_enable_images', enableImages.toString());
+    localStorage.setItem('search_strategy', strategy);
+    
+    // Применяем настройки к SEARCH_CONFIG
+    updateSearchConfig();
+    
+    addLogEntry(`Настройки поиска сохранены: автопривязка=${enableLinking ? 'вкл' : 'выкл'}, автосоздание=${enableCreation ? 'вкл' : 'выкл'}, изображения=${enableImages ? 'вкл' : 'выкл'}, стратегия=${strategy}`, 'success', 'system');
+}
+
+function updateSearchConfig() {
+    const enableLinking = document.getElementById('enable-linking').checked;
+    const enableCreation = document.getElementById('enable-creation').checked;
+    const enableImages = document.getElementById('enable-images').checked;
+    const strategy = document.getElementById('search-strategy').value;
+    
+    // Обновляем глобальную конфигурацию
+    if (window.SEARCH_CONFIG) {
+        window.SEARCH_CONFIG.enableProductLinking = enableLinking;
+        window.SEARCH_CONFIG.enableProductCreation = enableCreation;
+        window.SEARCH_CONFIG.enableImageSync = enableImages;
+        window.SEARCH_CONFIG.matchingStrategy = strategy;
+    } else {
+        // Создаем конфигурацию если её нет
+        window.SEARCH_CONFIG = {
+            enableProductLinking: enableLinking,
+            enableProductCreation: enableCreation,
+            enableImageSync: enableImages,
+            matchingStrategy: strategy
+        };
+    }
+    
+    addLogEntry(`Конфигурация поиска обновлена: автопривязка=${enableLinking}, автосоздание=${enableCreation}, изображения=${enableImages}, стратегия=${strategy}`, 'info', 'system');
+}
+
+async function testProductSearch() {
+    try {
+        addLogEntry('🔍 Запуск тестирования поиска товаров...', 'info', 'system');
+        
+        // Получаем небольшую выборку товаров из Slimrate для тестирования
+        const response = await fetch('https://dev.slimrate.com/v1/items/read/tablet', {
+            method: 'POST',
+            headers: { 
+                'Authorization': AUTH_TOKEN,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                limit: 5,
+                offset: 0
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.result) {
+            const items = data.result;
+            addLogEntry(`Получено ${items.length} товаров для тестирования`, 'info', 'system');
+            
+            let foundCount = 0;
+            let newLinksCount = 0;
+            
+            // Импортируем функции поиска
+            const { findWooProductBySlimrateId, findWooProductByMultipleCriteria } = await import('./js/sync/updateItems.js');
+            
+            for (const item of items.slice(0, 3)) { // Тестируем только первые 3
+                const searchId = (item.varName === "" || !item.varName) ? item.rootId : item.id;
+                
+                addLogEntry(`Тестируем товар: ${searchId} - "${item.rootName || item.displayName}"`, 'info', 'system');
+                
+                // Сначала основной поиск
+                let wooProduct = await findWooProductBySlimrateId(searchId);
+                
+                if (wooProduct) {
+                    addLogEntry(`✅ Найден по Slimrate ID: WC${wooProduct.id}`, 'success', 'system');
+                    foundCount++;
+                } else {
+                    // Пробуем расширенный поиск
+                    wooProduct = await findWooProductByMultipleCriteria(item);
+                    
+                    if (wooProduct) {
+                        addLogEntry(`🔍 Найден по альтернативным критериям: WC${wooProduct.id}`, 'success', 'system');
+                        foundCount++;
+                        newLinksCount++;
+                    } else {
+                        addLogEntry(`❌ Не найден`, 'warning', 'system');
+                    }
+                }
+            }
+            
+            addLogEntry(`📊 Результаты теста: найдено ${foundCount} из 3, новых привязок: ${newLinksCount}`, 'success', 'system');
+            
+        } else {
+            throw new Error(data.message || 'Ошибка получения товаров');
+        }
+        
+    } catch (error) {
+        addLogEntry(`❌ Ошибка тестирования: ${error.message}`, 'error', 'system');
     }
 }
 

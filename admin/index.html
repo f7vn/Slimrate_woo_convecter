@@ -47,6 +47,54 @@
                             <button id="resetLastSyncBtn" class="btn-reset">🔄 Сброс времени последней синхронизации</button>
                         </div>
                         
+                        <h2>Настройки поиска товаров</h2>
+                        <div class="search-settings-panel">
+                            <div class="setting-row">
+                                <label for="enable-linking">
+                                    <input type="checkbox" id="enable-linking" checked>
+                                    Включить автопривязку существующих товаров
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <label for="enable-creation">
+                                    <input type="checkbox" id="enable-creation" checked>
+                                    Включить автосоздание новых товаров
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <label for="enable-images">
+                                    <input type="checkbox" id="enable-images" checked>
+                                    Синхронизировать изображения товаров
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <label for="search-strategy">Стратегия поиска:</label>
+                                <select id="search-strategy">
+                                    <option value="slimrate_id_only">Только по Slimrate ID (безопасно)</option>
+                                    <option value="sku_priority">Приоритет SKU + Slimrate ID</option>
+                                    <option value="auto" selected>Умная привязка (SKU + название + категория)</option>
+                                    <option value="aggressive">Агрессивная привязка (все критерии)</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <button id="save-search-settings" class="btn-set">💾 Сохранить настройки</button>
+                                <button id="test-search" class="btn-test">🔍 Тест поиска товаров</button>
+                            </div>
+                            <div class="search-info">
+                                <small>
+                                    <strong>Объяснение настроек:</strong><br>
+                                    • <strong>Автопривязка</strong> - ищет и привязывает существующие товары WooCommerce<br>
+                                    • <strong>Автосоздание</strong> - создаёт новые товары, если они не найдены<br>
+                                    • <strong>Изображения</strong> - синхронизирует картинки из Slimrate в WooCommerce<br>
+                                    • <strong>Стратегии поиска:</strong><br>
+                                    &nbsp;&nbsp;◦ <strong>Только ID</strong> - ищет только товары, уже привязанные к Slimrate<br>
+                                    &nbsp;&nbsp;◦ <strong>Приоритет SKU</strong> - ищет по SKU, затем по Slimrate ID<br>
+                                    &nbsp;&nbsp;◦ <strong>Умная</strong> - ищет по SKU, названию и категории<br>
+                                    &nbsp;&nbsp;◦ <strong>Агрессивная</strong> - использует все доступные критерии поиска
+                                </small>
+                            </div>
+                        </div>
+                        
                         <h2>Автоматическая синхронизация</h2>
                         <div class="autosync-panel">
                             <div class="autosync-status-row">

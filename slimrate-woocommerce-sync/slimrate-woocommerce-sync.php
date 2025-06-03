@@ -207,6 +207,8 @@ class SlimrateWooCommerceSync {
             'sync_interval' => 'hourly',
             'last_sync_time' => '',
             'debug_mode' => false,
+            'enable_product_linking' => true,
+            'product_matching_strategy' => 'auto',
         );
         
         foreach ($default_options as $option_name => $default_value) {

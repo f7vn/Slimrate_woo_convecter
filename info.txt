@@ -1,5 +1,5 @@
 email: favnwork@gmail.com
-pass: 1qaz@WSX
+pass: 1qaz@WSX  V0a9Br@ClIP%Qo&1
 
 
 auth in acc: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoxMSwiaWQiOiI5QjAyS0VWNkJXIiwiaXNhIjpmYWxzZSwiaWF0IjoxNzQ2NzE4MzQzLCJleHAiOjE3NTQ0OTQzNDN9.6P8vBe25nTjat4TGM1nMCW5uKnaMC7ds8H86SSqxfz8
@@ -13,3 +13,5 @@ mainPath for staging: https://dev.slimrate.com/v1
 
 orderManagerTest@gmail.com
 4ujy3P5CuGAVxM7
+
+ 

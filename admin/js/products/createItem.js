@@ -203,15 +203,15 @@ async function handleCreateItemSubmit(e) {
                 barcode: simpleData.barcode,
                 price: simpleData.price,
                 color: "ffebba3d",
-                strikeThroughPrice: simpleData.strikeThroughPrice,
-                startQuantity: simpleData.manageStock ? simpleData.startQuantity : '0', // Всегда включаем поле
+                // strikeThroughPrice: simpleData.strikeThroughPrice || null,
+                startQuantity: simpleData.startQuantity ? simpleData.startQuantity : '0', // Всегда включаем поле
                 wooInfo: {
                     name: formData.get('displayName'),
                     description: simpleData.wooInfo.description || formData.get('description') || '',
                     shortDescription: simpleData.wooInfo.shortDescription || '',
                     pictures: allImages
                 },
-                cost: simpleData.cost || '', // Добавляем поле cost
+                // cost: simpleData.cost || '', // Добавляем поле cost
                 admin_notes: '', // Добавляем поле admin_notes
                 skuCode: simpleData.skuCode
             }]

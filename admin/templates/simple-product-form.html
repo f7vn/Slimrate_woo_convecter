@@ -3,15 +3,15 @@
     <div class="form-grid">
         <div class="form-group">
             <label>Цена продажи:</label>
-            <input type="number" name="simplePrice" step="1" placeholder="0">
+            <input type="string" name="simplePrice"  placeholder="0">
         </div>
         <div class="form-group">
             <label>Себестоимость:</label>
-            <input type="number" name="simpleCost" step="1" placeholder="0">
+            <input type="string" name="simpleCost"  placeholder="0">
         </div>
         <div class="form-group">
             <label>Зачеркнутая цена:</label>
-            <input type="number" name="simpleStrikeThroughPrice" step="1" placeholder="0">
+            <input type="string" name="simpleStrikeThroughPrice" placeholder="0">
         </div>
         <div class="form-group">
             <label>SKU:</label>
@@ -35,7 +35,7 @@
         </div>
         <div class="form-group" id="simpleStockQuantityGroup" style="display: none;">
             <label>Количество на складе: <span class="required">*</span></label>
-            <input type="number" name="simpleStartQuantity" min="0" step="1" placeholder="0" value="0">
+            <input type="number" name="simpleStartQuantity" min="0" step="1" placeholder="0" value="">
             <small class="field-help">Укажите целое количество товара на складе</small>
         </div>
     </div>
